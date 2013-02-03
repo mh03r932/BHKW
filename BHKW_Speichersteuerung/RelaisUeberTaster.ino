@@ -176,7 +176,7 @@ void handleWaermetransportSpeicher(){
     double temperature3 = sensors.getTempC(temp3);//lies temperatur des fuehelrs 3
     double temperature2 = sensors.getTempC(temp2);//lies temperatur des fuehelrs 2
   if(isBetriebActive() && temperature3 >= 73 && temperature3 < 80 ||
-     isBetriebActive()  && temperature2 >= 95){
+     isBetriebActive()  && temperature2 >= 105){
      activateExclusive(RELAIS3); //exklusiv einschalten
   } else if(isBetriebActive() && temperature3 >= 80 && temperature3 < 85){
       activateExclusive(RELAIS4);//4ein alle anderen aus
