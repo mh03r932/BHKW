@@ -1,9 +1,8 @@
-// Deiser Code steuert die Relais ueber 2 Taster (einer für EIN und einer für AUS)
-// Die Steuerung ermittelt ausserdem die Temperatur von 2 ds18b20 fuehlern an einem
-// one wire bus
+// BHKW Steuerung 24. Juni 2013
+// one wire bus 
 #include <OneWire.h>
 #include <DallasTemperature.h>
-
+#include <LiquidCrystal.h>
 
 // Data wire is plugged into port 8 on the Arduino
 #define ONE_WIRE_BUS 4
@@ -27,13 +26,13 @@ volatile unsigned long bounceTime=0; // variable to hold ms count to debounce a 
 wenn x1 high x2 high -> Restwaerme abfuehren
 wenn x1 low  x2 high -> vorwaermen
 wenn x1 high x2 low -> betrieb
-wenn x1 low  x2 low -> betrieb */
+wenn x1 low  x2 low -> alles aus */
 
 // Setup einen OneWire Bus fuer die Kommunikation mit den Temperaturfuehlern
 OneWire oneWire(ONE_WIRE_BUS);
 // Die DallasTemparature Lib uebernimtm das handling des one wire bus
 DallasTemperature sensors(&oneWire);
-const long TEMPR_READ_INTERVAL = 3000; // gibt an wie haeufig Temperatur gelesen wird
+const long TEMPR_READ_INTERVAL = 6000; // gibt an wie haeufig Temperatur gelesen wird
 
 // arrays mit den Adressen der Temperaturfuehler 28D3AF3304000081
 DeviceAddress temp1 = { 0x28, 0x81, 0x91, 0x33, 0x4, 0x0, 0x0, 0xE7 };
@@ -43,9 +42,10 @@ DeviceAddress temp4 = { 0x28, 0x89, 0x7A, 0x33, 0x4, 0x0, 0x0, 0xEC };
 double temp1Val = 0,temp2Val = 0,temp3Val =0,temp4Val = 0;
 
 unsigned long lastTempReadTime = 0;  // Wann die Temperatur zuletzt gelesen wurde
-const double vorwaermenTemp = 45; //Temperatur bei dem das Relais fuer das vorwaermen der Maschine ausgeschaltet wird
+const double vorwaermenTemp = 40; //Temperatur bei dem das Relais fuer das vorwaermen der Maschine ausgeschaltet wird
 const double abgasWtEinTemp = 35; //Temperatur von der an die Pumpe des Abgaswaermetauschers lauft
 double abgastWtPumpStartedTime = -1; //Zeit zu der die Abgaswaermetauschpumpe beim abstellen gestartet wurde, -1 bedeutet das noch keine Zeit gesetzt wurde
+LiquidCrystal lcd(A0, A1, A4, A5, A6, A7);
 
 /**
 * Initialisierung des Programms (Anschluesse, Sensonren etc ..)
@@ -67,6 +67,15 @@ void setup() {
   digitalWrite(RELAIS5,HIGH);
   digitalWrite(RELAIS6,HIGH);
   digitalWrite(ON_OFF_LIGHT,HIGH);
+  
+    pinMode(A0,OUTPUT);
+    pinMode(A1,OUTPUT);
+    pinMode(A4,OUTPUT);
+    pinMode(A5,OUTPUT);
+    pinMode(A6,OUTPUT);
+    pinMode(A7,OUTPUT);
+  // set up the LCD's number of columns and rows: 
+  lcd.begin(16,2);
   
   
   //Gib Daten der Temperaturfuehler aus
@@ -99,18 +108,34 @@ void setup() {
   sensors.setResolution(temp3, TEMPERATURE_PRECISION);
   sensors.setResolution(temp4, TEMPERATURE_PRECISION);
   
+  
 }
 /*
 * Schlaufe welche dauernd wiederholt wird
 */
 void loop() {
   readTemperatures();
-  handleVorwaermen(); //vorwaermen handhaben
-  handleAbgaswaermetauscher1();
-  handleWaermetransportSpeicher();
-  handleNotstop();
+  handleNotstop();  
+  if(!isEverythingOff()){
+    handleVorwaermen(); //vorwaermen handhaben
+    handleAbgaswaermetauscher1();
+    handleWaermetransportSpeicher();
+  }else{
+    //kein betrieb -> lampe aus
+    digitalWrite(ON_OFF_LIGHT,HIGH);
+    digitalWrite(RELAIS, HIGH );
+    digitalWrite(RELAIS2, HIGH );
+    digitalWrite(RELAIS3,HIGH);
+    digitalWrite(RELAIS4,HIGH);
+    digitalWrite(RELAIS5,HIGH);
+        
+  }
 
 }
+boolean isEverythingOff(){
+   return (digitalRead(IN_1) == LOW && digitalRead(IN_2) == LOW);  
+}
+
 /* Startet die Vorwaermpumpe wenn die Temperatur noch tief ist
 */
 void handleVorwaermen(){
@@ -170,14 +195,15 @@ void handleWaermetransportSpeicher(){
     double temperature4 = temp4Val;//lies temperatur des fuehelrs 4  
     double temperature3 = temp3Val;//lies temperatur des fuehelrs 3
     double temperature2 = temp2Val;//lies temperatur des fuehelrs 2
-  if(isBetriebActive() && temperature3 >= 81 && temperature3 < 85 ||
-     isBetriebActive()  && temperature2 >= 105){
+  if(isBetriebActive() && temperature3 >= 78 && temperature3 < 83){
      activateExclusive(RELAIS3); //exklusiv einschalten
-  } else if(isBetriebActive() && temperature3 >= 85 && temperature3 < 88){
+  } else if(isBetriebActive() && temperature3 >= 83 && temperature3 < 85){
       activateExclusive(RELAIS4);//4ein alle anderen aus
-  } else if(isBetriebActive() && temperature3 >= 88){
+  } else if(isBetriebActive() && temperature3 >= 85){
        activateExclusive(RELAIS5); //5 ein andere aus
-  } else if(isRestwaermeAbfuhr() && temperature3 > 40  && (temperature3 - temperature4) > 4){ 
+  }else if( isBetriebActive()  && temperature2 >= 105){
+       activateExclusive(RELAIS3);//temp3 erfordert keine aktion. gaskuehler abfragen
+  } else if(isRestwaermeAbfuhr() && temperature3 > 40  && (temperature3 - temperature4) > 8){ 
        activateExclusive(RELAIS5); //5 ein andere aus
   }
   else{
@@ -189,16 +215,14 @@ void handleWaermetransportSpeicher(){
   }
 }
 
-/* Wenn IN_2 low ist dann ist immer betrieb*/
+/* Wenn IN_1 High und  IN_2 low ist dann ist betrieb*/
 boolean isBetriebActive(){
-  if((digitalRead(IN_2) == LOW )){
+  if(digitalRead(IN_1 == HIGH ) && digitalRead(IN_2) == LOW){
       digitalWrite(ON_OFF_LIGHT,LOW);
       return true;
-  } else{
-    //kein betrieb -> lampe aus
-    digitalWrite(ON_OFF_LIGHT,HIGH);
-    return false;
-  }
+  } 
+  return false;
+  
 }
 
 boolean isRestwaermeAbfuhr(){
@@ -241,19 +265,45 @@ void readTemperatures(){
     Serial.print("Frage Temperaturfuehler ab... ");
     sensors.requestTemperatures();
     Serial.println("FERTIG");
-    temp1Val = sensors.getTempC(temp1);
-    temp2Val = sensors.getTempC(temp2);
-    temp3Val = sensors.getTempC(temp3);
-    temp4Val = sensors.getTempC(temp4);
+    double newTemp1 = sensors.getTempC(temp1);
+    double newTemp2 = sensors.getTempC(temp2);
+    double newTemp3 = sensors.getTempC(temp3);
+    double newTemp4 = sensors.getTempC(temp4);
+    //if the value that was read equals -127 then there was a problem reading it. ignore value and hope the next read will correct the problem
+
+ if(newTemp1 != -127){
+      temp1Val = newTemp1;
+    }else{
+      Serial.println("read Value was -127; ignored it");
+    }
+    
+ if(newTemp2 != -127){
+      temp2Val = newTemp2;
+    }else{
+      Serial.println("read Value was -127; ignored it");
+    }
+ if(newTemp3 != -127){
+      temp3Val = newTemp3;
+    }else{
+      Serial.println("read Value was -127; ignored it");
+    }
+ if(newTemp4 != -127){
+      temp4Val = newTemp4;
+    }else{
+      Serial.println("read Value was -127; ignored it");
+    }
     // Zeige Temperatur auf Serieller Schnittstelle
     printTemperature("temp1",temp1Val); 
     printTemperature("temp2",temp2Val);
     printTemperature("temp3",temp3Val);
     printTemperature("temp4",temp4Val);
+    printTemperatureLCD();
     lastTempReadTime = currentMillis;
   
   }
 }
+
+
 
 // function to print the temperature for a device
 void printTemperature(String name,double tempC)
@@ -263,6 +313,20 @@ void printTemperature(String name,double tempC)
   Serial.print(": ");
   Serial.println(tempC);
 
+}
+
+// function to print the temperature for a device
+void printTemperatureLCD(){
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print(temp1Val);
+  lcd.print(" ");
+  lcd.print(temp2Val);
+  lcd.setCursor(0,1);
+  lcd.print(temp3Val);
+  lcd.print(" ");
+  lcd.print(temp4Val);
+    
 }
 
 // function to print a device address
